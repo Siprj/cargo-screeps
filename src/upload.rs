@@ -9,6 +9,7 @@ use std::{
 use failure::{bail, ensure};
 use log::*;
 use serde::Serialize;
+use walkdir::WalkDir;
 
 use crate::config::Authentication;
 
@@ -31,13 +32,17 @@ pub fn upload(
             .map(|p| root.join(p))
             .unwrap_or_else(|| root.into())
             .join(target);
+        if ! target_dir.exists()
+        {
+            warn!("include path [{:?}] doesn't exist; Ignoring!", target_dir);
+            continue;
+        }
 
-        for entry in fs::read_dir(target_dir)? {
-            let entry = entry?;
+        for entry in WalkDir::new(&target_dir).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
 
-            if let (Some(name), Some(extension)) = (path.file_stem(), path.extension()) {
-                let contents = if extension == "js" {
+            if let (Some(name), Some(module_directory), Some(extension)) = (path.file_stem(), path.parent(), path.extension()) {
+                let content = if extension == "js" {
                     let data = {
                         let mut buf = String::new();
                         fs::File::open(&path)?.read_to_string(&mut buf)?;
@@ -55,10 +60,42 @@ pub fn upload(
                 } else {
                     continue;
                 };
+                // We need the module name to be something like: "test/module/name"
+                // Meaning it shouldn't contain any leading slashes or dots.
+                let module_name = module_directory.strip_prefix(&target_dir).expect("We failed generating the module name");
+                let module_name = module_name.join(name);
 
-                files.insert(name.to_string_lossy().into_owned(), contents);
+                files.insert(module_name.to_string_lossy().into_owned(), content);
             }
         }
+
+        // for entry in fs::read_dir(target_dir)? {
+        //     let entry = entry?;
+        //     let path = entry.path();
+
+        //     if let (Some(name), Some(extension)) = (path.file_stem(), path.extension()) {
+        //         let contents = if extension == "js" {
+        //             let data = {
+        //                 let mut buf = String::new();
+        //                 fs::File::open(&path)?.read_to_string(&mut buf)?;
+        //                 buf
+        //             };
+        //             serde_json::Value::String(data)
+        //         } else if extension == "wasm" {
+        //             let data = {
+        //                 let mut buf = Vec::new();
+        //                 fs::File::open(&path)?.read_to_end(&mut buf)?;
+        //                 buf
+        //             };
+        //             let data = base64::encode(&data);
+        //             serde_json::json!({ "binary": data })
+        //         } else {
+        //             continue;
+        //         };
+
+        //         files.insert(name.to_string_lossy().into_owned(), contents);
+        //     }
+        // }
     }
 
     let client = reqwest::Client::builder()
